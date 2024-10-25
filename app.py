@@ -1,29 +1,20 @@
-import math, keyboard, pygame
-import tkinter as tk
+# app.py
+from flask import Flask, render_template, request, jsonify
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
-from data import dataset, firstdataset, seconddataset, testsample, frequency, frequency2
 import warnings
 warnings.filterwarnings("ignore")
-#thanks for downloading, some brief things if you wanna further tweak this project:
-#  the current winrate on the 907 standardized test is 11.246%
-#  I did explain lots of the main system in my video (poorly ofc)
-#  so I went through and added comments are certain bits to hopefully catch you up
-#  if somehow after working on this project you manage to improve the winrate on the standardized 907 test, message me because
-#  that's pretty interesting. Also try to be genuine with it because it is an incredibly easy thing to fake.
-#change these variables to the path of the files
-assets = r"assets/"
-checknumberbutton = assets + r"images/check.png"
-standardizedtestbutton = assets + r"images/run907.png"
-correctsfx = assets + r"audios/correct.mp3"
-wrongsfx = assets + r"audios/wrong.mp3"
 
+app = Flask(__name__)
 
+# Global variables
+port_number = 5000
+inputted, firstinp, secondinp = [], [], []
+win = 0
+played = [], [], [], [], [], 0, [], [], [], []
 
-global temp, tempc, next_element, confidence, nextfirstdiff, nextseconddiff
-inputted, firstdiff, seconddiff, temp, tempc, win, train, firstinp, secondinp, played = [], [], [], [], [], 0, [], [], [], []
-
+# Helper functions from your original code
 def prepare_data(sequence, n_lags=2):
     X, y = [], []
     for i in range(len(sequence) - n_lags):
@@ -31,11 +22,12 @@ def prepare_data(sequence, n_lags=2):
         y.append(sequence[i + n_lags])
     return np.array(X), np.array(y)
 
-#random forrest regressor func
 def predict_next(sequence, n_lags=2):
-    if len(sequence) < n_lags + 1: raise ValueError("short")
+    if len(sequence) < n_lags + 1:
+        raise ValueError("short")
     X, y = prepare_data(sequence, n_lags)
-    if X.size == 0 or y.size == 0: raise ValueError("short")
+    if X.size == 0 or y.size == 0:
+        raise ValueError("short")
     model = RandomForestRegressor(n_estimators=10, random_state=42)
     model.fit(X, y)
     last_values = np.array(sequence[-n_lags:]).reshape(1, -1)
@@ -47,7 +39,6 @@ def normal_pdf(x, mean, sigma):
     exponent = -((x - mean)**2) / (2 * sigma**2)
     return factor * (2.718281828459045**exponent)
 
-#takes the target first and second digit and does the fancy normal dist that was shown in video
 def normaldist(target_first_digit, target_second_digit, weight):
     global confidence
     for key in confidence.keys():
@@ -64,19 +55,6 @@ def normaldist(target_first_digit, target_second_digit, weight):
             confidence[key] += 0.5 * weight
     return confidence
 
-#this is for a more standard normal distibution curved that is fed a main number like '55' instead of '4', '3'
-def othernormaldist(target_number, weight):
-    global confidence
-    for key in confidence.keys():
-        number = int(key)
-        distance = abs(number - target_number)
-        confidence[key] += (10 * normal_pdf(distance, 0, 10)) * weight
-    for key in confidence.keys():
-        number = int(key)
-        if number == target_number:
-            confidence[key] += 0.35 * weight
-
-#markov chain
 def build_markov_chain(data, k):
     markov_chain = {}
     for i in range(len(data) - k):
@@ -89,7 +67,6 @@ def build_markov_chain(data, k):
         markov_chain[current_state][next_state] += 1
     return markov_chain
 
-#markov chain
 def predict_next_elementmark(markov_chain, current_state):
     while current_state not in markov_chain and len(current_state) > 1:
         current_state = current_state[1:]
@@ -112,7 +89,17 @@ def predict_next_elementmark(markov_chain, current_state):
             return next_state
     return None
 
-#this is the second main spot where all the regressors get called and then told to be normally distributed
+def othernormaldist(target_number, weight):
+    global confidence
+    for key in confidence.keys():
+        number = int(key)
+        distance = abs(number - target_number)
+        confidence[key] += (10 * normal_pdf(distance, 0, 10)) * weight
+    for key in confidence.keys():
+        number = int(key)
+        if number == target_number:
+            confidence[key] += 0.35 * weight
+
 def differencepred():
     global nextfirstdiff, nextseconddiff, confidence, firstinp, secondinp, inputted
     confidence = {str(i).zfill(2): 0 for i in range(0, 101)}
@@ -236,7 +223,7 @@ def differencepred():
     if nextfirstdiff: othernormaldist(int(nextfirstdiff), 4.8)
     return confidence
 
-#this is the main number retrieval function
+
 def main():
     global inputted, retro, temp, tempc, next_element, confidence, firstinp, secondinp
     next_element, difference = 0, 0
@@ -301,162 +288,52 @@ def main():
     inverted_confidence = {v: k for k, v in confidence.items()}
     return inverted_confidence[max(confidence.values())]
 
-#this is for humans to input into the textbox using the tkinter gui
-def numinput(event):
-    global win, confidence, confidencelabel, played, timerup, inputted
-    try:
-        if (timerup == False) and (len(inputted) < 500): input_text = entry.get()
-        else:
-            print(inputted)
-            raise ValueError
-        entry.delete(0, "end")
-        result_label.config(text="            ")
-        if (0 <= int(input_text) <= 100) and ((((input_text[0] not in {"0", " "}) == (0 <= int(input_text))<= 100)) or input_text == "0"):
-            returned = main()
-            inputted.append(input_text)
-            if (0 <= int(inputted[-1]) <= 9): inputted[-1] = f"0{inputted[-1]}"
-            played.insert(0, returned)
-            if len(played) >= 4: played.pop(-1)
-            if inputted[-1] == returned: 
-                pygame.mixer.music.load(correctsfx)
-                pygame.mixer.music.play()
-                result_label.config(text=f"    {returned}    ", bg="lawn green")
-                win += 1
-                winorloselabel.config(text="Bot Wins")
-            else:
-                pygame.mixer.music.load(wrongsfx)
-                pygame.mixer.music.play()
-                result_label.config(text=f"    {returned}    ", bg="red2")
-                winorloselabel.config(text="Bot Lost")
-            botplayedlabel.config(text=f"AI Win Rate: {(win/len(inputted)*100):.3f}%\nRounds Played: {len(inputted)}")
-            confidence_str = ""
-            result_label.after(200, result_label.config(bg="skyblue1"))
-            for key, value in confidence.items():
-                confidence_str += f"{key}: {value:.2f}, "
-                if int(key) % 6 == 0:
-                    confidence_str += "\n"
-            confidencelabel.config(text=f"Confidence levels for prior number:\n{confidence_str}\n(don't use these to cheat weirdo)", fg='black', bg="pale turquoise")
-        else: raise ValueError
-    except ValueError: result_label.config(text="poopy number", bg="skyblue1")
 
-#this is for running the 907 test, i commented out the audio players so your ears didn't wanna kill themselves
-def autonuminput(event):
-    global win, confidence, confidencelabel, inputted, firstinp, secondinp
-    result_label.config(text="calculating")
-    for input_text in testsample:
-        returned = main()
-        inputted.append(input_text)
-        if input_text == returned: 
-            #pygame.mixer.music.load(correctsfx)
-            #pygame.mixer.music.play()
-            win += 1
-        #else:
-            #pygame.mixer.music.load(wrongsfx)
-            #pygame.mixer.music.play()
-        print(f"actual answer: {input_text} AI winrate {(win/len(inputted)*100):.3f}% Rounds played {len(inputted)}/907")
-    botplayedlabel.config(text=f"AI Win Rate: {(win/len(inputted)*100):.3f}%\nRounds Played: {len(inputted)}")
-    confidence_str = ""
-    for key, value in confidence.items():
-            confidence_str += f"{key}: {value:.2f}, "
-            if int(key) % 6 == 0:
-                confidence_str += "\n"
-    result_label.config(text=" Done ")
-    confidencelabel.config(text=f"Confidence levels for prior number:\n{confidence_str}\n(don't use these to cheat weirdo)", fg='black', bg="pale turquoise")
+# Import your dataset variables here
+dataset = []  # Add your dataset here
+firstdataset = []  # Add your first dataset here
+seconddataset = []  # Add your second dataset here
+frequency = {}  # Add your frequency dict here
+frequency2 = {}  # Add your frequency2 dict here
 
-#this is a clock to pace humans inputting numbers, you can ignore this
-class CountdownTimer(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("countdown timer")
-        self.geometry("400x400")
-        self.configure(bg='white')
-        self.canvas = tk.Canvas(self, width=400, height=400, bg='white', highlightthickness=0)
-        self.canvas.pack()
-        self.total_seconds = 660
-        self.remaining_seconds = self.total_seconds
-        self.check_input_list()
-    def check_input_list(self):
-        global inputted
-        if len(inputted) > 0:
-            self.update_timer()
-        else:
-            minutes, seconds = divmod(self.remaining_seconds, 60)
-            time_str = f"{minutes:02}:{seconds:02}"
-            self.canvas.create_oval(200 - 150, 200 - 150,
-                                    200 + 150, 200 + 150,
-                                    outline='black', width=2)
-            angle = 2 * math.pi * (self.remaining_seconds / self.total_seconds - 0.25)
-            hand_x = 200 + 150 * 0.9 * math.cos(angle)
-            hand_y = 200 + 150 * 0.9 * math.sin(angle)
-            extent = 360 + (self.remaining_seconds / self.total_seconds * 360)
-            self.canvas.create_arc(200 - 150, 200 - 150,
-                                    200 + 150, 200 + 150,
-                                    start=90, extent=-extent, outline='', fill='lightblue', width=0, style=tk.PIESLICE)
-            self.canvas.create_line(200, 200, hand_x, hand_y, fill='red', width=4)
-            self.canvas.create_text(200, 200, text=time_str,
-                                    font=("Helvetica", 36), fill='black')
-            self.after(100, self.check_input_list)
-    def update_timer(self):
-        global timerup
-        if self.remaining_seconds >= 0:
-            self.canvas.delete("all")
-            minutes, seconds = divmod(self.remaining_seconds, 60)
-            time_str = f"{minutes:02}:{seconds:02}"
-            self.canvas.create_oval(200 - 150, 200 - 150,
-                                    200 + 150, 200 + 150,
-                                    outline='black', width=2)
-            angle = 2 * math.pi * (self.remaining_seconds / self.total_seconds - 0.25)
-            hand_x = 200 + 150 * 0.9 * math.cos(angle)
-            hand_y = 200 + 150 * 0.9 * math.sin(angle)
-            extent = 360 + (self.remaining_seconds / self.total_seconds * 360)
-            self.canvas.create_arc(200 - 150, 200 - 150,
-                                    200 + 150, 200 + 150,
-                                    start=90, extent=-extent, outline='', fill='lightblue', width=0, style=tk.PIESLICE)
-            self.canvas.create_line(200, 200, hand_x, hand_y, fill='red', width=4)
-            self.canvas.create_text(200, 200, text=time_str,
-                                    font=("Helvetica", 36), fill='black')
-            self.remaining_seconds -= 1
-            self.after(995, self.update_timer)
-        else:
-            timerup = True
-            self.canvas.create_text(200, 200, text="ooo time's up",
-                                    font=("Helvetica", 36), fill='red')
+@app.route('/')
+def home():
+    return render_template('index.html')
 
-#initialization
-keyboard.on_press_key("enter", numinput)
-pygame.mixer.init()
-timerup = False
-root = tk.Tk()
-root.title("Number predictor thing")
-root.configure(bg="pale turquoise")
-root.geometry("1500x1200")
-maintitle = tk.Label(root, text="Number Predictor Thing", font=("Helvetica", 60, "bold"), bg="white")
-maintitle.pack(pady=50)
-img_button = tk.PhotoImage(file=checknumberbutton)
-img_907button = tk.PhotoImage(file=standardizedtestbutton)
-entry = tk.Entry(root, font=("Helvetica", 40))
-entry.pack(pady=40)
-check_button = tk.Button(root, image=img_button, borderwidth=0, compound=tk.CENTER, bg="pale turquoise")
-check_button.pack(pady=20)
-result_label = tk.Label(root, text="            ", font=("Helvetica", 70), bg="skyblue1")
-result_label.pack(pady=10)
-botplayedlabel = tk.Label(root, text=f"AI Win Rate: NA%\nRounds Played: 0", font=('Helvetica', 50, 'bold'), fg='black', bg="pale turquoise") 
-botplayedlabel.pack(side="bottom")
-winorloselabel = tk.Label(root, text="", font=("Helvetica", 70), bg="pale turquoise")
-winorloselabel.pack(pady=10)
-button907 = tk.Button(root, image=img_907button, borderwidth=0, compound=tk.CENTER, bg="pale turquoise")
-button907.pack(side="left",padx=100)
-confidenceinit = {str(i).zfill(2): 0 for i in range(0, 101)}
-confidence_str = ""
-for key, value in confidenceinit.items():
-    confidence_str += f"{key}: {value:.2f}, "
-    if int(key) % 6 == 0:
-        confidence_str += "\n"
-confidencelabel = tk.Label(root, text=f"Confidence levels for prior number:\n{confidence_str}\n(don't use these to cheat weirdo)", fg='black', bg="pale turquoise", font=('Helvetica', 15, 'bold'))
-confidencelabel.pack(side="right",padx=50)
-check_button.bind("<Button-1>", numinput)
-button907.bind("<Button-1>", autonuminput)
+@app.route('/predict', methods=['POST'])
+def predict():
+    global inputted, win
+    
+    data = request.json
+    number = data.get('number')
+    
+    if not (0 <= int(number) <= 100):
+        return jsonify({'error': 'Invalid number'}), 400
+        
+    # Format number to have leading zero if needed
+    if 0 <= int(number) <= 9:
+        number = f"0{number}"
+        
+    # Add to input list
+    inputted.append(number)
+    
+    # Get prediction using your main logic
+    prediction = main()  # Implement your main prediction function
+    
+    # Check if prediction was correct
+    correct = (number == prediction)
+    if correct:
+        win += 1
+    
+    # Calculate win rate
+    win_rate = (win/len(inputted)*100) if inputted else 0
+    
+    return jsonify({
+        'prediction': prediction,
+        'correct': correct,
+        'winRate': round(win_rate, 3),
+        'roundsPlayed': len(inputted)
+    })
 
-if __name__ == "__main__":
-    CountdownTimer()
-    root.mainloop()
+if __name__ == '__main__':
+    app.run(debug=True,port=port_number)
